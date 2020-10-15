@@ -1,3 +1,4 @@
+use scones::make_builder;
 use scones::make_constructor;
 
 // #[make_constructor]
@@ -29,8 +30,57 @@ use scones::make_constructor;
 //     pub identical: bool,
 // }
 
-#[make_constructor(-> Result<Self, i32>)]
 pub struct Test {
-    #[value(10)]
-    value: i32
+    a: i32,
+    b: i32,
+}
+
+pub struct TestBuilder<AStatus__, BStatus__> {
+    a: ::scones::BuilderFieldContainer<i32, AStatus__>,
+    b: ::scones::BuilderFieldContainer<i32, BStatus__>,
+}
+
+impl TestBuilder<::scones::Missing, ::scones::Missing> {
+    pub fn new() -> Self {
+        Self {
+            a: ::scones::BuilderFieldContainer::missing(),
+            b: ::scones::BuilderFieldContainer::missing(),
+        }
+    }
+}
+
+impl<AStatus__, BStatus__> TestBuilder<AStatus__, BStatus__> {
+    pub fn a(self, value: i32) -> TestBuilder<::scones::Present, BStatus__> {
+        TestBuilder {
+            a: ::scones::BuilderFieldContainer::present(value),
+            b: self.b,
+        }
+    }
+
+    pub fn b(self, value: i32) -> TestBuilder<AStatus__, ::scones::Present> {
+        TestBuilder {
+            a: self.a,
+            b: ::scones::BuilderFieldContainer::present(value),
+        }
+    }
+}
+
+impl TestBuilder<::scones::Present, ::scones::Present> {
+    pub fn build(self) -> Test {
+        Test {
+            a: self.a.into_value(),
+            b: self.b.into_value(),
+        }
+    }
+}
+
+pub fn test() {
+    let value = TestBuilder::new().a(12).b(24).a(12).build();
+}
+
+#[make_builder((c: Option<i32>))]
+pub struct Test2 {
+    #[value(c.unwrap_or(12))]
+    a: i32,
+    b: i32,
 }

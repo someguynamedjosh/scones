@@ -6,7 +6,7 @@ use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
-use syn::token::Comma;
+use syn::token::{Comma, Paren};
 use syn::{
     braced, parenthesized, parse_quote, Attribute, Error, Expr, Fields, Ident, ItemStruct, Path,
     Token, Type, Visibility,
@@ -20,68 +20,91 @@ struct FieldInfo<'a> {
     default_init: Option<TokenStream2>,
 }
 
-enum ConstructorParam {
-    /// A parameter which directly corresponds to a specific field.
-    Field(Ident),
-    /// A parameter which is custom and will be used to initialize other fields.
-    Custom(Ident, Type),
-    /// A stand-in for any Field parameters not explicitly specified.
-    Ellipses,
-}
-
-impl Parse for ConstructorParam {
-    fn parse(input: ParseStream) -> syn::parse::Result<Self> {
-        if input.peek(Token![.]) && input.peek2(Token![.]) {
-            let _: Token![.] = input.parse()?;
-            let _: Token![.] = input.parse()?;
-            Ok(Self::Ellipses)
-        } else {
-            let name: Ident = input.parse()?;
-            if input.peek(Token![:]) {
-                let _: Token![:] = input.parse()?;
-                let ty: Type = input.parse()?;
-                Ok(Self::Custom(name, ty))
-            } else {
-                Ok(Self::Field(name))
-            }
-        }
-    }
-}
-
 enum ReturnSemantics {
     Selff,
     Result,
 }
 
-struct ConstructorInfo {
+enum BuilderParam {
+    Field {
+        name: Ident,
+    },
+    Custom {
+        name: Ident,
+        ty: Type,
+        optional: bool,
+    },
+}
+
+impl Parse for BuilderParam {
+    fn parse(input: ParseStream) -> syn::parse::Result<Self> {
+        let name: Ident = input.parse()?;
+        if input.peek(Token![:]) {
+            let _: Token![:] = input.parse()?;
+            let fork = input.fork();
+            let start: Ident = fork.parse()?;
+            let (ty, optional) = if start == "Option" {
+                let _: Ident = input.parse()?;
+                let _: Token![<] = input.parse()?;
+                let inner_ty: Type = input.parse()?;
+                let _: Token![>] = input.parse()?;
+                (inner_ty, true)
+            } else {
+                (input.parse()?, false)
+            };
+            Ok(Self::Custom { name, ty, optional })
+        } else {
+            Ok(Self::Field { name })
+        }
+    }
+}
+
+struct PartialBuilderInfo {
     vis: Visibility,
-    name: Ident,
-    params: Vec<ConstructorParam>,
+    name: Option<Ident>,
+    params: Vec<BuilderParam>,
     custom_return_type: Option<Type>,
     return_semantics: ReturnSemantics,
 }
 
-impl Parse for ConstructorInfo {
+struct BuilderInfo {
+    vis: Visibility,
+    name: Ident,
+    params: Vec<BuilderParam>,
+    custom_return_type: Option<Type>,
+    return_semantics: ReturnSemantics,
+}
+
+impl PartialBuilderInfo {
+    fn complete(self, struct_name: &Ident) -> BuilderInfo {
+        BuilderInfo {
+            vis: self.vis,
+            name: self.name.unwrap_or(format_ident!("{}Builder", struct_name)),
+            params: self.params,
+            custom_return_type: self.custom_return_type,
+            return_semantics: self.return_semantics,
+        }
+    }
+}
+
+impl Parse for PartialBuilderInfo {
     fn parse(input: ParseStream) -> syn::parse::Result<Self> {
         // An empty input is also a visibility.
         let mut vis: Visibility = input.parse().unwrap();
-        let (name, params): (Ident, _) = if input.peek(Token![fn]) {
-            let _: Token![fn] = input.parse()?;
-            let name: Ident = input.parse()?;
-            let params = if input.is_empty() {
-                vec![ConstructorParam::Ellipses]
-            } else {
-                let content;
-                parenthesized!(content in input);
-                let param_list = content.parse_terminated::<_, Comma>(ConstructorParam::parse)?;
-                param_list.into_iter().collect()
-            };
-            (name, params)
+        let name: Option<Ident> = if input.peek(Ident) {
+            Some(input.parse()?)
         } else {
-            // If they didn't even write "fn nam blah blah" then assume they want it publicly
-            // visible.
+            // If they didn't explicitly give a name default to public visibility.
             vis = parse_quote! { pub };
-            (parse_quote!(new), vec![ConstructorParam::Ellipses])
+            None
+        };
+        let params = if input.peek(Paren) {
+            let content;
+            parenthesized!(content in input);
+            let param_list = content.parse_terminated::<_, Comma>(BuilderParam::parse)?;
+            param_list.into_iter().collect()
+        } else {
+            Vec::new()
         };
         let (custom_return_type, return_semantics) = if input.peek(Token![-]) {
             let _: Token![-] = input.parse()?;
@@ -118,6 +141,317 @@ impl Parse for ConstructorInfo {
             return_semantics,
         })
     }
+}
+
+enum ConstructorParam {
+    /// A parameter which directly corresponds to a specific field.
+    Field(Ident),
+    /// A parameter which is custom and will be used to initialize other fields.
+    Custom(Ident, Type),
+    /// A stand-in for any Field parameters not explicitly specified.
+    Ellipses,
+}
+
+impl Parse for ConstructorParam {
+    fn parse(input: ParseStream) -> syn::parse::Result<Self> {
+        if input.peek(Token![.]) && input.peek2(Token![.]) {
+            let _: Token![.] = input.parse()?;
+            let _: Token![.] = input.parse()?;
+            Ok(Self::Ellipses)
+        } else {
+            let name: Ident = input.parse()?;
+            if input.peek(Token![:]) {
+                let _: Token![:] = input.parse()?;
+                let ty: Type = input.parse()?;
+                Ok(Self::Custom(name, ty))
+            } else {
+                Ok(Self::Field(name))
+            }
+        }
+    }
+}
+
+struct ConstructorInfo {
+    vis: Visibility,
+    name: Ident,
+    params: Vec<ConstructorParam>,
+    custom_return_type: Option<Type>,
+    return_semantics: ReturnSemantics,
+}
+
+impl Parse for ConstructorInfo {
+    fn parse(input: ParseStream) -> syn::parse::Result<Self> {
+        // An empty input is also a visibility.
+        let mut vis: Visibility = input.parse().unwrap();
+        let name: Ident = if input.peek(Ident) {
+            input.parse()?
+        } else {
+            // If they didn't explicitly give a name default to public visibility.
+            vis = parse_quote! { pub };
+            parse_quote! { new }
+        };
+        let params = if input.peek(Paren) {
+            let content;
+            parenthesized!(content in input);
+            let param_list = content.parse_terminated::<_, Comma>(ConstructorParam::parse)?;
+            param_list.into_iter().collect()
+        } else {
+            vec![ConstructorParam::Ellipses]
+        };
+        let (custom_return_type, return_semantics) = if input.peek(Token![-]) {
+            let _: Token![-] = input.parse()?;
+            let _: Token![>] = input.parse()?;
+            let fork = input.fork();
+            let mut ty: Type = input.parse()?;
+            let type_name: Ident = fork.parse()?;
+            let semantics = if type_name == "Self" {
+                ReturnSemantics::Selff
+            } else if type_name == "Result" {
+                let _: Token![<] = fork.parse()?;
+                let _: Token![Self] = fork.parse()?;
+                let _: Token![,] = fork.parse()?;
+                let other_type: Type = fork.parse()?;
+                let _: Token![>] = fork.parse()?;
+                // Make sure we are using the right Result type.
+                ty = parse_quote! { ::core::result::Result<Self, #other_type> };
+                ReturnSemantics::Result
+            } else {
+                return Err(Error::new_spanned(
+                    ty,
+                    "This macro can only create constructors that return Self or Result<Self, _>.",
+                ));
+            };
+            (Some(ty), semantics)
+        } else {
+            (None, ReturnSemantics::Selff)
+        };
+        Ok(Self {
+            vis,
+            name,
+            params,
+            custom_return_type,
+            return_semantics,
+        })
+    }
+}
+
+#[derive(Clone)]
+enum BuilderField {
+    Required {
+        name: Ident,
+        ty: Type,
+        status_param: Ident,
+    },
+    Optional {
+        name: Ident,
+        ty: Type,
+    },
+}
+
+impl BuilderField {
+    fn borrow_name(&self) -> &Ident {
+        match self {
+            Self::Required { name, .. } | Self::Optional { name, .. } => name,
+        }
+    }
+}
+
+fn make_builder_fields(
+    builder_name: &str,
+    params: Vec<BuilderParam>,
+    fields: &[FieldInfo],
+) -> Result<(Vec<Ident>, Vec<BuilderField>), Error> {
+    let mut status_params = Vec::new();
+    let mut builder_fields = Vec::new();
+    // Stores fields that must be in the parameters of the builder but the user has not
+    // yet explicitly specified any extra settings for them.
+    let mut remaining_fields: Vec<_> = fields
+        .iter()
+        .cloned()
+        .filter(|e| !e.custom_init.contains_key(builder_name) && e.default_init.is_none())
+        .collect();
+    for param in params {
+        match param {
+            BuilderParam::Field { name } => {
+                let mut found_field: Option<FieldInfo> = None;
+                for (index, field) in remaining_fields.iter().enumerate() {
+                    if field.ident == name {
+                        found_field = Some(remaining_fields.remove(index));
+                        break;
+                    }
+                }
+                if found_field.is_none() {
+                    for field in fields {
+                        if field.ident == name {
+                            found_field = Some(field.clone());
+                            break;
+                        }
+                    }
+                }
+                if let Some(field) = found_field {
+                    let status_param =
+                        format_ident!("{}Status__", field.ident.to_string().to_pascal_case());
+                    status_params.push(status_param.clone());
+                    builder_fields.push(BuilderField::Required {
+                        name,
+                        ty: field.ty.clone(),
+                        status_param,
+                    })
+                } else {
+                    return Err(Error::new_spanned(
+                        name,
+                        concat!("Could not find a field with this name",),
+                    ));
+                }
+            }
+            BuilderParam::Custom { name, ty, optional } => {
+                if optional {
+                    builder_fields.push(BuilderField::Optional { name, ty });
+                } else {
+                    let status_param =
+                        format_ident!("{}Status__", name.to_string().to_pascal_case());
+                    status_params.push(status_param.clone());
+                    builder_fields.push(BuilderField::Required {
+                        name,
+                        ty,
+                        status_param,
+                    })
+                }
+            }
+        }
+    }
+    for field in remaining_fields {
+        let status_param = format_ident!("{}Status__", field.ident.to_string().to_pascal_case());
+        status_params.push(status_param.clone());
+        builder_fields.push(BuilderField::Required {
+            name: field.ident,
+            ty: field.ty.clone(),
+            status_param,
+        })
+    }
+    Ok((status_params, builder_fields))
+}
+
+fn make_builder_impl(
+    struct_name: &Ident,
+    info: BuilderInfo,
+    fields: &[FieldInfo],
+) -> Result<TokenStream2, Error> {
+    let builder_name = info.name;
+    let str_name = builder_name.to_string();
+    let (status_params, builder_fields) = make_builder_fields(&str_name, info.params, fields)?;
+    let all_fields = builder_fields.clone();
+    let vis = info.vis;
+    let mut field_defs = Vec::new();
+    let mut initial_values = Vec::new();
+    let mut field_mutators = Vec::new();
+    let mut constructor_setup = Vec::new();
+    for field in builder_fields {
+        match field {
+            BuilderField::Optional { name, ty } => {
+                field_defs.push(quote! { #name: ::std::option::Option<#ty> });
+                initial_values.push(quote! { #name: ::std::option::Option::None });
+                field_mutators.push(quote! {
+                    #vis fn #name(mut self, value: #ty) -> Self {
+                        self.#name = ::std::option::Option::Some(value);
+                        self
+                    }
+                });
+                constructor_setup.push(quote! { let #name = self.#name; });
+            }
+            BuilderField::Required {
+                name,
+                ty,
+                status_param,
+            } => {
+                field_defs
+                    .push(quote! { #name: ::scones::BuilderFieldContainer<#ty, #status_param> });
+                initial_values.push(quote! { #name: ::scones::BuilderFieldContainer::missing() });
+                // Replace FieldNameStatus__ with ::scones::Present after using the mutator fn.
+                let sp_after_mut = status_params.iter().map(|sp| {
+                    if sp == &status_param {
+                        quote! { ::scones::Present }
+                    } else {
+                        quote! { #sp }
+                    }
+                });
+                let mut mutator_fields = Vec::new();
+                for other_field in &all_fields {
+                    let other_name = other_field.borrow_name();
+                    // If this is the field we are mutating...
+                    if other_name == &name {
+                        mutator_fields.push(
+                            quote! { #name: ::scones::BuilderFieldContainer::present(value) },
+                        );
+                    } else {
+                        mutator_fields.push(quote! { #other_name: self.#other_name });
+                    }
+                }
+                field_mutators.push(quote! {
+                    #vis fn #name(self, value: #ty) -> #builder_name <#(#sp_after_mut),*> {
+                        #builder_name {
+                            #(#mutator_fields),*
+                        }
+                    }
+                });
+                constructor_setup.push(quote! { let #name = self.#name.into_value(); });
+            }
+        }
+    }
+
+    let mut initializers = Vec::new();
+    for field in fields {
+        let ident = &field.ident;
+        let init = field
+            .custom_init
+            .get(&str_name)
+            .or(field.default_init.as_ref())
+            .cloned()
+            .unwrap_or(quote! { #ident });
+        initializers.push(quote! {
+            #ident: #init
+        });
+    }
+
+    let all_missing_status: Vec<_> = status_params
+        .iter()
+        .map(|_| quote! { ::scones::Missing })
+        .collect();
+    let all_present_status: Vec<_> = status_params
+        .iter()
+        .map(|_| quote! { ::scones::Present })
+        .collect();
+    let return_type = info
+        .custom_return_type
+        .unwrap_or(parse_quote! { #struct_name });
+    let return_semantics = info.return_semantics;
+    let constructor_body = match return_semantics {
+        ReturnSemantics::Selff => quote! { #struct_name { #(#initializers),* } },
+        ReturnSemantics::Result => {
+            quote! { ::core::result::Result::Ok(#struct_name { #(#initializers),* }) }
+        }
+    };
+    Ok(quote! {
+        #vis struct #builder_name <#(#status_params),*> {
+            #(#field_defs),*
+        }
+        impl #builder_name <#(#all_missing_status),*> {
+            #vis fn new() -> Self {
+                Self {
+                    #(#initial_values),*
+                }
+            }
+        }
+        impl <#(#status_params),*> #builder_name <#(#status_params),*> {
+            #(#field_mutators)*
+        }
+        impl #builder_name <#(#all_present_status),*> {
+            #vis fn build(self) -> #return_type {
+                #(#constructor_setup)*
+                #constructor_body
+            }
+        }
+    })
 }
 
 fn make_constructor_args(
@@ -294,8 +628,8 @@ impl Parse for GenerateItemsContent {
     }
 }
 
-/// This can be invoked multiple times and it will produce a single #[make_constructor_internal]
-/// invocation.
+// This can be invoked multiple times and it will produce a single #[generate_items__]
+// invocation.
 #[proc_macro_attribute]
 pub fn make_constructor(input_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_attr2: TokenStream2 = input_attr.clone().into();
@@ -324,21 +658,55 @@ pub fn make_constructor(input_attr: TokenStream, item: TokenStream) -> TokenStre
     (quote! { #struct_def }).into()
 }
 
+// This can be invoked multiple times and it will produce a single #[generate_items__]
+// invocation.
+#[proc_macro_attribute]
+pub fn make_builder(input_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input_attr2: TokenStream2 = input_attr.clone().into();
+    // Check that the input is valid.
+    let _: PartialBuilderInfo = syn::parse_macro_input!(input_attr);
+    let macro_arg = quote! { builder { #input_attr2 } };
+    let mut struct_def: ItemStruct = syn::parse_macro_input!(item);
+    let mut found = false;
+    for attr in &mut struct_def.attrs {
+        if path_equal(&attr.path, &parse_quote! { ::scones::generate_items__}) {
+            let old_args: GenerateItemsContent = syn::parse2(attr.tokens.clone()).unwrap();
+            let old_args = old_args.args;
+            attr.tokens = quote! { ( #old_args #macro_arg ) };
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        let attr_def = quote! {
+            #[::scones::generate_items__(#macro_arg)]
+        };
+        struct_def
+            .attrs
+            .append(&mut (Attribute::parse_outer).parse2(attr_def).unwrap());
+    }
+    (quote! { #struct_def }).into()
+}
+
 struct GenerateItemsArgs {
+    builders: Vec<PartialBuilderInfo>,
     constructors: Vec<ConstructorInfo>,
 }
 
 impl Parse for GenerateItemsArgs {
     fn parse(input: ParseStream) -> syn::parse::Result<Self> {
         let mut result = Self {
+            builders: Vec::new(),
             constructors: Vec::new(),
         };
         while !input.is_empty() {
             let kind: Ident = input.parse()?;
+            let content;
+            braced!(content in input);
             if kind == "constructor" {
-                let content;
-                braced!(content in input);
                 result.constructors.push(content.parse()?);
+            } else if kind == "builder" {
+                result.builders.push(content.parse()?);
             } else {
                 unreachable!("Bad syntax generation");
             }
@@ -350,14 +718,24 @@ impl Parse for GenerateItemsArgs {
 /// This is the actual macro that generates constructors. Use #{make_constructor} to invoke it.
 #[proc_macro_attribute]
 pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let GenerateItemsArgs { constructors } = syn::parse_macro_input!(attr);
+    let GenerateItemsArgs {
+        builders,
+        constructors,
+    } = syn::parse_macro_input!(attr);
     let mut item_names: HashSet<String> = HashSet::new();
     for c in &constructors {
         item_names.insert(c.name.to_string());
     }
-
     let mut struct_def: ItemStruct = syn::parse_macro_input!(item);
     let struct_name = &struct_def.ident;
+    let builders: Vec<_> = builders
+        .into_iter()
+        .map(|b| b.complete(struct_name))
+        .collect();
+    for b in &builders {
+        item_names.insert(b.name.to_string());
+    }
+
     let fields = if let Fields::Named(fields) = &mut struct_def.fields {
         &mut fields.named
     } else {
@@ -412,6 +790,13 @@ pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
         });
     }
 
+    let mut builder_code = Vec::new();
+    for builder in builders {
+        match make_builder_impl(&struct_name, builder, &field_infos[..]) {
+            Ok(def) => builder_code.push(def),
+            Err(err) => return err.to_compile_error().into(),
+        }
+    }
     let mut constructor_defs = Vec::new();
     for cons in constructors {
         match make_constructor_impl(cons, &field_infos[..]) {
@@ -422,6 +807,7 @@ pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     (quote! {
         #struct_def
+        #(#builder_code)*
         impl #struct_name {
             #(#constructor_defs)*
         }
