@@ -30,7 +30,10 @@ pub struct MultipleConstructors {
     pub identical: bool,
 }
 
+#[make_builder]
+#[make_builder(TemplatedTryBuilder -> Result<Self, i32>)]
 #[make_constructor]
+#[make_constructor(try_new -> Result<Self, i32>)]
 pub struct Templated<T> where T: Sized {
     pub data: T
 }

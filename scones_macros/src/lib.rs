@@ -125,8 +125,7 @@ impl Parse for PartialBuilderInfo {
                 let _: Token![,] = fork.parse()?;
                 let other_type: Type = fork.parse()?;
                 let _: Token![>] = fork.parse()?;
-                // Make sure we are using the right Result type.
-                ty = parse_quote! { ::core::result::Result<Self, #other_type> };
+                ty = other_type;
                 ReturnSemantics::Result
             } else {
                 return Err(Error::new_spanned(
@@ -352,6 +351,7 @@ fn make_builder_fields(
 
 fn make_builder_impl(
     struct_name: &Ident,
+    generic_params: &Generics,
     info: BuilderInfo,
     fields: &[FieldInfo],
 ) -> Result<TokenStream2, Error> {
@@ -360,6 +360,7 @@ fn make_builder_impl(
     let (status_params, builder_fields) = make_builder_fields(&str_name, info.params, fields)?;
     let all_fields = builder_fields.clone();
     let vis = info.vis;
+    let generic_args = make_generic_args(generic_params);
     let mut field_defs = Vec::new();
     let mut initial_values = Vec::new();
     let mut field_mutators = Vec::new();
@@ -399,13 +400,18 @@ fn make_builder_impl(
                     .push(quote! { #name: ::scones::BuilderFieldContainer<#ty, #status_param> });
                 initial_values.push(quote! { #name: ::scones::BuilderFieldContainer::missing() });
                 // Replace FieldNameStatus__ with ::scones::Present after using the mutator fn.
-                let sp_after_mut = status_params.iter().map(|sp| {
-                    if sp == &status_param {
-                        quote! { ::scones::Present }
-                    } else {
-                        quote! { #sp }
-                    }
-                });
+                let mut sp_after_mut = status_params
+                    .iter()
+                    .map(|sp| {
+                        if sp == &status_param {
+                            quote! { ::scones::Present }
+                        } else {
+                            quote! { #sp }
+                        }
+                    })
+                    .collect();
+                let mut new_generic_args = generic_args.clone();
+                new_generic_args.append(&mut sp_after_mut);
                 let mut mutator_fields = Vec::new();
                 for other_field in &all_fields {
                     let other_name = other_field.borrow_name();
@@ -419,7 +425,7 @@ fn make_builder_impl(
                     }
                 }
                 field_mutators.push(quote! {
-                    #vis fn #name(self, value: #ty) -> #builder_name <#(#sp_after_mut),*> {
+                    #vis fn #name(self, value: #ty) -> #builder_name <#(#new_generic_args),*> {
                         #builder_name {
                             #(#mutator_fields),*
                         }
@@ -450,39 +456,65 @@ fn make_builder_impl(
         }
     }
 
-    let all_missing_status: Vec<_> = status_params
-        .iter()
-        .map(|_| quote! { ::scones::Missing })
-        .collect();
-    let all_present_status: Vec<_> = status_params
-        .iter()
-        .map(|_| quote! { ::scones::Present })
-        .collect();
-    let return_type = info
+    let all_missing_args = {
+        let mut vec = generic_args.clone();
+        vec.append(
+            &mut status_params
+                .iter()
+                .map(|_| quote! { ::scones::Missing })
+                .collect(),
+        );
+        vec
+    };
+    let all_present_args = {
+        let mut vec = generic_args.clone();
+        vec.append(
+            &mut status_params
+                .iter()
+                .map(|_| quote! { ::scones::Present })
+                .collect(),
+        );
+        vec
+    };
+    let all_generic_args = {
+        let mut vec = generic_args.clone();
+        vec.append(&mut status_params.iter().map(|i| quote! { #i }).collect());
+        vec
+    };
+    let result_type: Type = parse_quote! { #struct_name <#(#generic_args),*> };
+    let mut return_type = info
         .custom_return_type
-        .unwrap_or(parse_quote! { #struct_name });
+        .unwrap_or(result_type.clone());
     let return_semantics = info.return_semantics;
     let constructor_body = match return_semantics {
         ReturnSemantics::Selff => quote! { #struct_name { #(#initializers),* } },
         ReturnSemantics::Result => {
+            return_type = parse_quote!{ ::core::result::Result<#result_type, #return_type> };
             quote! { ::core::result::Result::Ok(#struct_name { #(#initializers),* }) }
         }
     };
+    let generic_where = &generic_params.where_clause;
+    let mut all_generic_params = generic_params.clone();
+    for status_param in &status_params {
+        all_generic_params
+            .params
+            .push(parse_quote! { #status_param });
+    }
     Ok(quote! {
-        #vis struct #builder_name <#(#status_params),*> {
+        #vis struct #builder_name #all_generic_params #generic_where {
             #(#field_defs),*
         }
-        impl #builder_name <#(#all_missing_status),*> {
+        impl #generic_params #builder_name <#(#all_missing_args),*> #generic_where {
             #vis fn new() -> Self {
                 Self {
                     #(#initial_values),*
                 }
             }
         }
-        impl <#(#status_params),*> #builder_name <#(#status_params),*> {
+        impl #all_generic_params #builder_name <#(#all_generic_args),*> #generic_where {
             #(#field_mutators)*
         }
-        impl #builder_name <#(#all_present_status),*> {
+        impl #generic_params #builder_name <#(#all_present_args),*> #generic_where {
             #vis fn build(self) -> #return_type {
                 #(#constructor_setup)*
                 #constructor_body
@@ -850,7 +882,7 @@ pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut builder_code = Vec::new();
     for builder in builders {
-        match make_builder_impl(&struct_name, builder, &field_infos[..]) {
+        match make_builder_impl(&struct_name, &generic_params, builder, &field_infos[..]) {
             Ok(def) => builder_code.push(def),
             Err(err) => return err.to_compile_error().into(),
         }
