@@ -8,8 +8,8 @@ use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
 use syn::token::{Comma, Paren};
 use syn::{
-    braced, parenthesized, parse_quote, Attribute, Error, Expr, Fields, Ident, ItemStruct, Path,
-    Token, Type, Visibility,
+    braced, parenthesized, parse_quote, Attribute, Error, Expr, Fields, GenericParam, Generics,
+    Ident, ItemStruct, Path, Token, Type, Visibility,
 };
 
 #[derive(Clone)]
@@ -651,6 +651,26 @@ fn path_equal(p1: &Path, p2: &Path) -> bool {
     }
 }
 
+fn make_generic_args(params: &Generics) -> Vec<TokenStream2> {
+    let mut args = Vec::new();
+    for param in params.params.iter() {
+        match param {
+            GenericParam::Type(tp) => {
+                let ident = &tp.ident;
+                args.push(quote! { #ident });
+            }
+            GenericParam::Lifetime(lt) => {
+                args.push(quote! { #lt });
+            }
+            GenericParam::Const(cp) => {
+                let ident = &cp.ident;
+                args.push(quote! { #ident });
+            }
+        }
+    }
+    args
+}
+
 struct GenerateItemsContent {
     args: TokenStream2,
 }
@@ -764,6 +784,7 @@ pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
         item_names.insert(c.name.to_string());
     }
     let mut struct_def: ItemStruct = syn::parse_macro_input!(item);
+    let generic_params = &struct_def.generics;
     let struct_name = &struct_def.ident;
     let builders: Vec<_> = builders
         .into_iter()
@@ -842,10 +863,14 @@ pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
+    let generic_param_list = &generic_params.params;
+    let generic_where = &generic_params.where_clause;
+    let generic_args = make_generic_args(&generic_params);
+
     (quote! {
         #struct_def
         #(#builder_code)*
-        impl #struct_name {
+        impl <#generic_param_list> #struct_name <#(#generic_args),*> #generic_where {
             #(#constructor_defs)*
         }
     })
