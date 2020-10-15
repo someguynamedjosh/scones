@@ -482,14 +482,12 @@ fn make_builder_impl(
         vec
     };
     let result_type: Type = parse_quote! { #struct_name <#(#generic_args),*> };
-    let mut return_type = info
-        .custom_return_type
-        .unwrap_or(result_type.clone());
+    let mut return_type = info.custom_return_type.unwrap_or(result_type.clone());
     let return_semantics = info.return_semantics;
     let constructor_body = match return_semantics {
         ReturnSemantics::Selff => quote! { #struct_name { #(#initializers),* } },
         ReturnSemantics::Result => {
-            return_type = parse_quote!{ ::core::result::Result<#result_type, #return_type> };
+            return_type = parse_quote! { ::core::result::Result<#result_type, #return_type> };
             quote! { ::core::result::Result::Ok(#struct_name { #(#initializers),* }) }
         }
     };
@@ -500,7 +498,32 @@ fn make_builder_impl(
             .params
             .push(parse_quote! { #status_param });
     }
+
+    let mut documentation = "".to_owned();
+    documentation.push_str(&format!(
+        "A builder which creates an instance of `{}`. Use `{}::new()` to start the builder. ",
+        struct_name, builder_name,
+    ));
+    documentation.push_str("Calling `build()` consumes the builder, returning the completed ");
+    documentation.push_str("item. Before calling `build()`, you can modify values the builder ");
+    documentation.push_str("will use by calling any of the other functions. For this builder, ");
+    documentation.push_str("you must call all of the following functions at least once before ");
+    documentation.push_str("calling `build()`, or you will receive a compilation error:\n");
+    let mut example = format!("");
+    for field in &all_fields {
+        if let BuilderField::Required { name, ty, .. } = field {
+            documentation.push_str(&format!("- `{}(value: {})`\n", name, quote! { #ty }));
+            example.push_str(&format!("\n    .{}(value)", name));
+        }
+    }
+    documentation.push_str("\nHere is a minimal example:\n```\n");
+    documentation.push_str(&format!(
+        "let instance = {}::new(){}.build();\n```",
+        builder_name, example,
+    ));
+
     Ok(quote! {
+        #[doc=#documentation]
         #vis struct #builder_name #all_generic_params #generic_where {
             #(#field_defs),*
         }
@@ -805,6 +828,7 @@ impl Parse for GenerateItemsArgs {
 }
 
 /// This is the actual macro that generates constructors. Use #{make_constructor} to invoke it.
+#[doc(hidden)]
 #[proc_macro_attribute]
 pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
     let GenerateItemsArgs {
