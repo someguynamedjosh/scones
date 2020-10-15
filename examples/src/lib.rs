@@ -29,8 +29,8 @@ use scones::make_constructor;
 //     pub identical: bool,
 // }
 
-#[make_constructor(pub fn new())]
+#[make_constructor(-> Result<Self, i32>)]
 pub struct Test {
-    #[value(10 for nonexistant)]
+    #[value(10)]
     value: i32
 }

@@ -48,10 +48,17 @@ impl Parse for ConstructorParam {
     }
 }
 
+enum ReturnSemantics {
+    Selff,
+    Result,
+}
+
 struct ConstructorInfo {
     vis: Visibility,
     name: Ident,
     params: Vec<ConstructorParam>,
+    custom_return_type: Option<Type>,
+    return_semantics: ReturnSemantics,
 }
 
 impl Parse for ConstructorInfo {
@@ -76,7 +83,40 @@ impl Parse for ConstructorInfo {
             vis = parse_quote! { pub };
             (parse_quote!(new), vec![ConstructorParam::Ellipses])
         };
-        Ok(Self { vis, name, params })
+        let (custom_return_type, return_semantics) = if input.peek(Token![-]) {
+            let _: Token![-] = input.parse()?;
+            let _: Token![>] = input.parse()?;
+            let fork = input.fork();
+            let mut ty: Type = input.parse()?;
+            let type_name: Ident = fork.parse()?;
+            let semantics = if type_name == "Self" {
+                ReturnSemantics::Selff
+            } else if type_name == "Result" {
+                let _: Token![<] = fork.parse()?;
+                let _: Token![Self] = fork.parse()?;
+                let _: Token![,] = fork.parse()?;
+                let other_type: Type = fork.parse()?;
+                let _: Token![>] = fork.parse()?;
+                // Make sure we are using the right Result type.
+                ty = parse_quote! { ::core::result::Result<Self, #other_type> };
+                ReturnSemantics::Result
+            } else {
+                return Err(Error::new_spanned(
+                    ty,
+                    "This macro can only create constructors that return Self or Result<Self, _>.",
+                ));
+            };
+            (Some(ty), semantics)
+        } else {
+            (None, ReturnSemantics::Selff)
+        };
+        Ok(Self {
+            vis,
+            name,
+            params,
+            custom_return_type,
+            return_semantics,
+        })
     }
 }
 
@@ -170,6 +210,7 @@ fn make_constructor_impl(
     let name = info.name;
     let name_str = name.to_string();
     let params = make_constructor_args(&name_str, &info.params[..], fields)?;
+    let return_type = info.custom_return_type.unwrap_or(parse_quote! { Self });
     let mut initializers = Vec::new();
     for field in fields {
         let ident = &field.ident;
@@ -183,11 +224,21 @@ fn make_constructor_impl(
             #ident: #init
         });
     }
-    Ok(quote! {
-        #vis fn #name (#params) -> Self {
+    let body = match info.return_semantics {
+        ReturnSemantics::Selff => quote! {
             Self {
                 #(#initializers),*
             }
+        },
+        ReturnSemantics::Result => quote! {
+            ::core::result::Result::Ok(Self {
+                #(#initializers),*
+            })
+        },
+    };
+    Ok(quote! {
+        #vis fn #name (#params) -> #return_type {
+            #body
         }
     })
 }
