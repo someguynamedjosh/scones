@@ -56,11 +56,8 @@ struct ConstructorInfo {
 
 impl Parse for ConstructorInfo {
     fn parse(input: ParseStream) -> syn::parse::Result<Self> {
-        let vis: Visibility = if input.fork().parse::<Visibility>().is_ok() {
-            input.parse().unwrap()
-        } else {
-            parse_quote! { pub }
-        };
+        // An empty input is also a visibility.
+        let mut vis: Visibility = input.parse().unwrap();
         let (name, params): (Ident, _) = if input.peek(Token![fn]) {
             let _: Token![fn] = input.parse()?;
             let name: Ident = input.parse()?;
@@ -74,6 +71,9 @@ impl Parse for ConstructorInfo {
             };
             (name, params)
         } else {
+            // If they didn't even write "fn nam blah blah" then assume they want it publicly
+            // visible.
+            vis = parse_quote! { pub };
             (parse_quote!(new), vec![ConstructorParam::Ellipses])
         };
         Ok(Self { vis, name, params })
@@ -216,7 +216,6 @@ impl Parse for ValueBody {
 #[proc_macro_attribute]
 pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
     let constructor_info: ConstructorInfo = syn::parse_macro_input!(attr);
-    let mut constructors = vec![constructor_info];
 
     let mut struct_def: ItemStruct = syn::parse_macro_input!(item);
     let struct_name = &struct_def.ident;
@@ -262,15 +261,12 @@ pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
         });
     }
 
-    let mut constructor_defs = Vec::new();
-    for cons in constructors {
-        constructor_defs.push(make_constructor_impl(cons, &field_infos[..]));
-    }
+    let constructor_def = make_constructor_impl(constructor_info, &field_infos[..]);
 
     (quote! {
         #struct_def
         impl #struct_name {
-            #(#constructor_defs)*
+            #constructor_def
         }
     })
     .into()

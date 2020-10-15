@@ -1,6 +1,7 @@
 use scones::make_constructor;
 
 #[make_constructor(pub(crate) fn mew2())]
+#[make_constructor]
 pub struct Basic {
     #[value(0 for mew2)]
     value: i32,
