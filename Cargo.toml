@@ -3,4 +3,5 @@
 members = [
     "examples",
     "scones",
+    "scones_macros",
 ]
