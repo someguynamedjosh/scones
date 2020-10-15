@@ -1,0 +1,18 @@
+[package]
+name = "scones"
+version = "0.1.0"
+authors = ["Joshua Maros <60271685+joshua-maros@users.noreply.github.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "Generates simple constructors for structs."
+documentation = "https://docs.rs/scones"
+repository = "https://github.com/joshua-maros/scones"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+Inflector = "0.11"
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "1.0", features = ["full"] }

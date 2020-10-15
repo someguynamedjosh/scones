@@ -1,0 +1,12 @@
+[package]
+name = "scones_examples"
+version = "0.1.0"
+authors = ["Joshua Maros <60271685+joshua-maros@users.noreply.github.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "Examples (and tests) for the Scones crate."
+documentation = "https://docs.rs/scones_examples"
+repository = "https://github.com/joshua-maros/scones"
+
+[dependencies]
+scones = { version = "0.1", path = "../scones" }
