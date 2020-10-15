@@ -16,6 +16,9 @@ struct FieldInfo<'a> {
     ident: Ident,
     ty: &'a Type,
     initializer: TokenStream2,
+    /// True if this field must be included in the parameter list of a constructor (I.E. if it will)
+    /// be automatically added.)
+    parameter_required: bool,
 }
 
 enum ConstructorParam {
@@ -80,7 +83,13 @@ impl Parse for ConstructorInfo {
 
 fn make_constructor_args(param_info: &[ConstructorParam], fields: &[FieldInfo]) -> TokenStream2 {
     let mut param_impls = Vec::new();
-    let mut remaining_fields: Vec<_> = fields.iter().map(|e| e.clone()).collect();
+    // Stores fields that must be in the parameters of the constructor but the user has not
+    // yet explicitly specified where in the parameter list they should go.
+    let mut remaining_fields: Vec<_> = fields
+        .iter()
+        .cloned()
+        .filter(|e| e.parameter_required)
+        .collect();
     // If we do not encounter an ellipses, then just insert the extra parameters at the end of the
     // signature.
     let mut remaining_fields_insertion_index = param_info.len();
@@ -98,6 +107,19 @@ fn make_constructor_args(param_info: &[ConstructorParam], fields: &[FieldInfo]) 
                         });
                         success = true;
                         break;
+                    }
+                }
+                if !success {
+                    for field in fields {
+                        if &field.ident == field_name {
+                            let name = field.ident.clone();
+                            let ty = &field.ty;
+                            param_impls.push(quote! {
+                                #name: #ty
+                            });
+                            success = true;
+                            break;
+                        }
                     }
                 }
                 if !success {
@@ -141,10 +163,32 @@ fn make_constructor_impl(info: ConstructorInfo, fields: &[FieldInfo]) -> TokenSt
     let vis = info.vis;
     let name = info.name;
     let params = make_constructor_args(&info.params[..], fields);
+    let mut initializers = Vec::new();
+    for field in fields {
+        let ident = &field.ident;
+        let init = &field.initializer;
+        initializers.push(quote! {
+            #ident: #init
+        });
+    }
     quote! {
-        #vis fn #name (#params) {
-
+        #vis fn #name (#params) -> Self {
+            Self {
+                #(#initializers),*
+            }
         }
+    }
+}
+
+struct EqualsExpr {
+    expr: Expr,
+}
+
+impl Parse for EqualsExpr {
+    fn parse(input: ParseStream) -> syn::parse::Result<Self> {
+        let _: Token![=] = input.parse()?;
+        let expr: Expr = input.parse()?;
+        Ok(Self { expr })
     }
 }
 
@@ -153,10 +197,10 @@ pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
     let constructor_info: ConstructorInfo = syn::parse_macro_input!(attr);
     let mut constructors = vec![constructor_info];
 
-    let struct_def: ItemStruct = syn::parse_macro_input!(item);
+    let mut struct_def: ItemStruct = syn::parse_macro_input!(item);
     let struct_name = &struct_def.ident;
-    let fields = if let Fields::Named(fields) = &struct_def.fields {
-        &fields.named
+    let fields = if let Fields::Named(fields) = &mut struct_def.fields {
+        &mut fields.named
     } else {
         return Error::new_spanned(
             &struct_def,
@@ -168,10 +212,28 @@ pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut field_infos = Vec::new();
     for field in fields {
         let ident = field.ident.clone().unwrap();
+        let mut initializer = quote! { #ident };
+        let mut parameter_required = true;
+        let mut condemned_indexes = Vec::new();
+        for (index, attr) in field.attrs.iter().enumerate() {
+            if attr.path.is_ident("value") {
+                condemned_indexes.push(index);
+                let tokens = attr.tokens.clone().into();
+                let ee: EqualsExpr = syn::parse_macro_input!(tokens);
+                let expr = ee.expr;
+                initializer = quote! { #expr };
+                parameter_required = false;
+            }
+        }
+        condemned_indexes.reverse();
+        for index in condemned_indexes {
+            field.attrs.remove(index);
+        }
         field_infos.push(FieldInfo {
-            initializer: quote! { ident },
+            initializer,
             ident,
             ty: &field.ty,
+            parameter_required,
         });
     }
 
