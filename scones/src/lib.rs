@@ -13,8 +13,9 @@ use syn::{
 
 #[derive(Clone)]
 struct FieldInfo<'a> {
-    ident: &'a Option<Ident>,
+    ident: Ident,
     ty: &'a Type,
+    initializer: TokenStream2,
 }
 
 enum ConstructorParam {
@@ -29,15 +30,17 @@ enum ConstructorParam {
 impl Parse for ConstructorParam {
     fn parse(input: ParseStream) -> syn::parse::Result<Self> {
         if input.peek(Token![.]) && input.peek2(Token![.]) {
+            let _: Token![.] = input.parse()?;
+            let _: Token![.] = input.parse()?;
             Ok(Self::Ellipses)
         } else {
             let name: Ident = input.parse()?;
-            if input.is_empty() {
-                Ok(Self::Field(name))
-            } else {
+            if input.peek(Token![:]) {
                 let _: Token![:] = input.parse()?;
                 let ty: Type = input.parse()?;
                 Ok(Self::Custom(name, ty))
+            } else {
+                Ok(Self::Field(name))
             }
         }
     }
@@ -51,29 +54,25 @@ struct ConstructorInfo {
 
 impl Parse for ConstructorInfo {
     fn parse(input: ParseStream) -> syn::parse::Result<Self> {
-        let mut input = &*input;
-        let fork = input.fork();
-        let maybe_vis = &fork;
-        let vis: Visibility = if let Ok(vis) = maybe_vis.parse() {
-            input = maybe_vis;
-            vis
+        let vis: Visibility = if input.fork().parse::<Visibility>().is_ok() {
+            input.parse().unwrap()
         } else {
             parse_quote! { pub }
         };
-        let (name, params): (Ident, _) = if input.is_empty() {
-            (parse_quote!(new), vec![ConstructorParam::Ellipses])
-        } else {
+        let (name, params): (Ident, _) = if input.peek(Token![fn]) {
             let _: Token![fn] = input.parse()?;
             let name: Ident = input.parse()?;
             let params = if input.is_empty() {
                 vec![ConstructorParam::Ellipses]
             } else {
                 let content;
-                braced!(content in input);
+                parenthesized!(content in input);
                 let param_list = content.parse_terminated::<_, Comma>(ConstructorParam::parse)?;
                 param_list.into_iter().collect()
             };
             (name, params)
+        } else {
+            (parse_quote!(new), vec![ConstructorParam::Ellipses])
         };
         Ok(Self { vis, name, params })
     }
@@ -90,9 +89,9 @@ fn make_constructor_args(param_info: &[ConstructorParam], fields: &[FieldInfo]) 
             ConstructorParam::Field(field_name) => {
                 let mut success = false;
                 for (index, field) in remaining_fields.iter().enumerate() {
-                    if field.ident.as_ref() == Some(field_name) {
+                    if &field.ident == field_name {
                         let field = remaining_fields.remove(index);
-                        let name = field.ident.as_ref().unwrap(); // Tuple structs not implemented.
+                        let name = field.ident;
                         let ty = &field.ty;
                         param_impls.push(quote! {
                             #name: #ty
@@ -123,11 +122,14 @@ fn make_constructor_args(param_info: &[ConstructorParam], fields: &[FieldInfo]) 
         }
     }
     for field in remaining_fields {
-        let name = field.ident.as_ref().unwrap(); // Tuple structs not implemented.
+        let name = field.ident;
         let ty = &field.ty;
-        param_impls.push(quote! {
-            #name: #ty
-        });
+        param_impls.insert(
+            remaining_fields_insertion_index,
+            quote! {
+                #name: #ty
+            },
+        );
         remaining_fields_insertion_index += 1;
     }
     quote! {
@@ -165,8 +167,10 @@ pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     let mut field_infos = Vec::new();
     for field in fields {
+        let ident = field.ident.clone().unwrap();
         field_infos.push(FieldInfo {
-            ident: &field.ident,
+            initializer: quote! { ident },
+            ident,
             ty: &field.ty,
         });
     }
@@ -176,10 +180,11 @@ pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
         constructor_defs.push(make_constructor_impl(cons, &field_infos[..]));
     }
 
-    (quote! { 
-        #struct_def 
+    (quote! {
+        #struct_def
         impl #struct_name {
-            #(#constructor_defs)* 
+            #(#constructor_defs)*
         }
-    }).into()
+    })
+    .into()
 }
