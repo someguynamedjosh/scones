@@ -3,13 +3,13 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use std::collections::HashMap;
-use syn::parse::{Parse, ParseStream};
+use std::collections::{HashMap, HashSet};
+use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{
-    braced, parenthesized, parse_quote, Error, Expr, Fields, Ident, ItemStruct, Token, Type,
-    Visibility,
+    braced, parenthesized, parse_quote, Attribute, Error, Expr, Fields, Ident, ItemStruct, Path,
+    Token, Type, Visibility,
 };
 
 #[derive(Clone)]
@@ -84,7 +84,7 @@ fn make_constructor_args(
     constructor_name: &str,
     param_info: &[ConstructorParam],
     fields: &[FieldInfo],
-) -> TokenStream2 {
+) -> Result<TokenStream2, Error> {
     let mut param_impls = Vec::new();
     // Stores fields that must be in the parameters of the constructor but the user has not
     // yet explicitly specified where in the parameter list they should go.
@@ -126,14 +126,14 @@ fn make_constructor_args(
                     }
                 }
                 if !success {
-                    return Error::new_spanned(
+                    eprintln!("Missing field.");
+                    return Err(Error::new_spanned(
                         field_name,
                         concat!(
                             "Could not find a field with this name ",
                             "(or it was used earlier in the constructor)"
                         ),
-                    )
-                    .to_compile_error();
+                    ));
                 }
             }
             ConstructorParam::Custom(name, ty) => {
@@ -157,16 +157,19 @@ fn make_constructor_args(
         );
         remaining_fields_insertion_index += 1;
     }
-    quote! {
+    Ok(quote! {
         #(#param_impls),*
-    }
+    })
 }
 
-fn make_constructor_impl(info: ConstructorInfo, fields: &[FieldInfo]) -> TokenStream2 {
+fn make_constructor_impl(
+    info: ConstructorInfo,
+    fields: &[FieldInfo],
+) -> Result<TokenStream2, Error> {
     let vis = info.vis;
     let name = info.name;
     let name_str = name.to_string();
-    let params = make_constructor_args(&name_str, &info.params[..], fields);
+    let params = make_constructor_args(&name_str, &info.params[..], fields)?;
     let mut initializers = Vec::new();
     for field in fields {
         let ident = &field.ident;
@@ -180,18 +183,18 @@ fn make_constructor_impl(info: ConstructorInfo, fields: &[FieldInfo]) -> TokenSt
             #ident: #init
         });
     }
-    quote! {
+    Ok(quote! {
         #vis fn #name (#params) -> Self {
             Self {
                 #(#initializers),*
             }
         }
-    }
+    })
 }
 
 struct ValueBody {
     expr: Expr,
-    for_constructor: Option<String>,
+    for_item: Option<Ident>,
 }
 
 impl Parse for ValueBody {
@@ -199,23 +202,108 @@ impl Parse for ValueBody {
         let interior;
         parenthesized!(interior in input);
         let expr: Expr = interior.parse()?;
-        let for_constructor = if interior.is_empty() {
+        let for_item = if interior.is_empty() {
             None
         } else {
             let _: Token![for] = interior.parse()?;
             let name: Ident = interior.parse()?;
-            Some(name.to_string())
+            Some(name)
         };
+        Ok(Self { expr, for_item })
+    }
+}
+
+fn path_equal(p1: &Path, p2: &Path) -> bool {
+    if p1.leading_colon.is_some() != p2.leading_colon.is_some() {
+        false
+    } else if p1.segments.len() != p2.segments.len() {
+        false
+    } else {
+        for (a, b) in p1.segments.iter().zip(p2.segments.iter()) {
+            // We are not comparing any paths with arguments so not worrying about that.
+            if a.ident.to_string() != b.ident.to_string() {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+struct GenerateItemsContent {
+    args: TokenStream2,
+}
+
+impl Parse for GenerateItemsContent {
+    fn parse(input: ParseStream) -> syn::parse::Result<Self> {
+        let interior;
+        parenthesized!(interior in input);
         Ok(Self {
-            expr,
-            for_constructor,
+            args: interior.parse()?,
         })
     }
 }
 
+/// This can be invoked multiple times and it will produce a single #[make_constructor_internal]
+/// invocation.
 #[proc_macro_attribute]
-pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let constructor_info: ConstructorInfo = syn::parse_macro_input!(attr);
+pub fn make_constructor(input_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input_attr2: TokenStream2 = input_attr.clone().into();
+    // Check that the input is valid.
+    let _: ConstructorInfo = syn::parse_macro_input!(input_attr);
+    let macro_arg = quote! { constructor { #input_attr2 } };
+    let mut struct_def: ItemStruct = syn::parse_macro_input!(item);
+    let mut found = false;
+    for attr in &mut struct_def.attrs {
+        if path_equal(&attr.path, &parse_quote! { ::scones::generate_items__}) {
+            let old_args: GenerateItemsContent = syn::parse2(attr.tokens.clone()).unwrap();
+            let old_args = old_args.args;
+            attr.tokens = quote! { ( #old_args #macro_arg ) };
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        let attr_def = quote! {
+            #[::scones::generate_items__(#macro_arg)]
+        };
+        struct_def
+            .attrs
+            .append(&mut (Attribute::parse_outer).parse2(attr_def).unwrap());
+    }
+    (quote! { #struct_def }).into()
+}
+
+struct GenerateItemsArgs {
+    constructors: Vec<ConstructorInfo>,
+}
+
+impl Parse for GenerateItemsArgs {
+    fn parse(input: ParseStream) -> syn::parse::Result<Self> {
+        let mut result = Self {
+            constructors: Vec::new(),
+        };
+        while !input.is_empty() {
+            let kind: Ident = input.parse()?;
+            if kind == "constructor" {
+                let content;
+                braced!(content in input);
+                result.constructors.push(content.parse()?);
+            } else {
+                unreachable!("Bad syntax generation");
+            }
+        }
+        Ok(result)
+    }
+}
+
+/// This is the actual macro that generates constructors. Use #{make_constructor} to invoke it.
+#[proc_macro_attribute]
+pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let GenerateItemsArgs { constructors } = syn::parse_macro_input!(attr);
+    let mut item_names: HashSet<String> = HashSet::new();
+    for c in &constructors {
+        item_names.insert(c.name.to_string());
+    }
 
     let mut struct_def: ItemStruct = syn::parse_macro_input!(item);
     let struct_name = &struct_def.ident;
@@ -242,8 +330,20 @@ pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let vb: ValueBody = syn::parse_macro_input!(tokens);
                 let expr = vb.expr;
                 let initializer = quote! { #expr };
-                if let Some(for_constructor) = vb.for_constructor {
-                    custom_init.insert(for_constructor, initializer);
+                if let Some(for_item) = vb.for_item {
+                    let item_name = for_item.to_string();
+                    if !item_names.contains(&item_name) {
+                        return Error::new_spanned(
+                            for_item,
+                            format!(
+                                "The identifier \"{}\" does not refer to a constructor or builder.",
+                                item_name
+                            ),
+                        )
+                        .to_compile_error()
+                        .into();
+                    }
+                    custom_init.insert(item_name, initializer);
                 } else {
                     default_init = Some(initializer);
                 }
@@ -261,12 +361,18 @@ pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
         });
     }
 
-    let constructor_def = make_constructor_impl(constructor_info, &field_infos[..]);
+    let mut constructor_defs = Vec::new();
+    for cons in constructors {
+        match make_constructor_impl(cons, &field_infos[..]) {
+            Ok(def) => constructor_defs.push(def),
+            Err(err) => return err.to_compile_error().into(),
+        }
+    }
 
     (quote! {
         #struct_def
         impl #struct_name {
-            #constructor_def
+            #(#constructor_defs)*
         }
     })
     .into()
