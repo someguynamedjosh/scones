@@ -1,7 +1,7 @@
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
+use scones::make_constructor;
+
+#[make_constructor]
+#[make_constructor]
+pub struct Basic {
+    value: i32,
 }
