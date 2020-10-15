@@ -78,9 +78,9 @@ pub fn test() {
     let value = TestBuilder::new().a(12).b(24).a(12).build();
 }
 
-#[make_builder((c: Option<i32>))]
+#[make_builder((a?))]
 pub struct Test2 {
-    #[value(c.unwrap_or(12))]
+    #[value(12)]
     a: i32,
     b: i32,
 }

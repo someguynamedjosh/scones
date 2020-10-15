@@ -28,6 +28,7 @@ enum ReturnSemantics {
 enum BuilderParam {
     Field {
         name: Ident,
+        overrid: bool,
     },
     Custom {
         name: Ident,
@@ -54,7 +55,11 @@ impl Parse for BuilderParam {
             };
             Ok(Self::Custom { name, ty, optional })
         } else {
-            Ok(Self::Field { name })
+            let overrid = input.peek(Token![?]);
+            if overrid {
+                let _: Token![?] = input.parse()?;
+            }
+            Ok(Self::Field { name, overrid })
         }
     }
 }
@@ -246,12 +251,18 @@ enum BuilderField {
         name: Ident,
         ty: Type,
     },
+    Override {
+        name: Ident,
+        ty: Type,
+    },
 }
 
 impl BuilderField {
     fn borrow_name(&self) -> &Ident {
         match self {
-            Self::Required { name, .. } | Self::Optional { name, .. } => name,
+            Self::Required { name, .. }
+            | Self::Optional { name, .. }
+            | Self::Override { name, .. } => name,
         }
     }
 }
@@ -272,7 +283,7 @@ fn make_builder_fields(
         .collect();
     for param in params {
         match param {
-            BuilderParam::Field { name } => {
+            BuilderParam::Field { name, overrid } => {
                 let mut found_field: Option<FieldInfo> = None;
                 for (index, field) in remaining_fields.iter().enumerate() {
                     if field.ident == name {
@@ -289,14 +300,21 @@ fn make_builder_fields(
                     }
                 }
                 if let Some(field) = found_field {
-                    let status_param =
-                        format_ident!("{}Status__", field.ident.to_string().to_pascal_case());
-                    status_params.push(status_param.clone());
-                    builder_fields.push(BuilderField::Required {
-                        name,
-                        ty: field.ty.clone(),
-                        status_param,
-                    })
+                    if overrid {
+                        builder_fields.push(BuilderField::Override {
+                            name,
+                            ty: field.ty.clone(),
+                        })
+                    } else {
+                        let status_param =
+                            format_ident!("{}Status__", field.ident.to_string().to_pascal_case());
+                        status_params.push(status_param.clone());
+                        builder_fields.push(BuilderField::Required {
+                            name,
+                            ty: field.ty.clone(),
+                            status_param,
+                        })
+                    }
                 } else {
                     return Err(Error::new_spanned(
                         name,
@@ -346,6 +364,7 @@ fn make_builder_impl(
     let mut initial_values = Vec::new();
     let mut field_mutators = Vec::new();
     let mut constructor_setup = Vec::new();
+    let mut override_fields = HashSet::new();
     for field in builder_fields {
         match field {
             BuilderField::Optional { name, ty } => {
@@ -358,6 +377,18 @@ fn make_builder_impl(
                     }
                 });
                 constructor_setup.push(quote! { let #name = self.#name; });
+            }
+            BuilderField::Override { name, ty } => {
+                field_defs.push(quote! { #name: ::std::option::Option<#ty> });
+                initial_values.push(quote! { #name: ::std::option::Option::None });
+                field_mutators.push(quote! {
+                    #vis fn #name(mut self, value: #ty) -> Self {
+                        self.#name = ::std::option::Option::Some(value);
+                        self
+                    }
+                });
+                constructor_setup.push(quote! { let #name = self.#name; });
+                override_fields.insert(name.to_string());
             }
             BuilderField::Required {
                 name,
@@ -408,9 +439,15 @@ fn make_builder_impl(
             .or(field.default_init.as_ref())
             .cloned()
             .unwrap_or(quote! { #ident });
-        initializers.push(quote! {
-            #ident: #init
-        });
+        if override_fields.contains(&ident.to_string()) {
+            initializers.push(quote! {
+                #ident: #ident.unwrap_or(#init)
+            });
+        } else {
+            initializers.push(quote! {
+                #ident: #init
+            });
+        }
     }
 
     let all_missing_status: Vec<_> = status_params
