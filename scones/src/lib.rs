@@ -3,6 +3,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use std::collections::HashMap;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
@@ -15,10 +16,8 @@ use syn::{
 struct FieldInfo<'a> {
     ident: Ident,
     ty: &'a Type,
-    initializer: TokenStream2,
-    /// True if this field must be included in the parameter list of a constructor (I.E. if it will)
-    /// be automatically added.)
-    parameter_required: bool,
+    custom_init: HashMap<String, TokenStream2>,
+    default_init: Option<TokenStream2>,
 }
 
 enum ConstructorParam {
@@ -81,14 +80,18 @@ impl Parse for ConstructorInfo {
     }
 }
 
-fn make_constructor_args(param_info: &[ConstructorParam], fields: &[FieldInfo]) -> TokenStream2 {
+fn make_constructor_args(
+    constructor_name: &str,
+    param_info: &[ConstructorParam],
+    fields: &[FieldInfo],
+) -> TokenStream2 {
     let mut param_impls = Vec::new();
     // Stores fields that must be in the parameters of the constructor but the user has not
     // yet explicitly specified where in the parameter list they should go.
     let mut remaining_fields: Vec<_> = fields
         .iter()
         .cloned()
-        .filter(|e| e.parameter_required)
+        .filter(|e| !e.custom_init.contains_key(constructor_name) && e.default_init.is_none())
         .collect();
     // If we do not encounter an ellipses, then just insert the extra parameters at the end of the
     // signature.
@@ -162,11 +165,17 @@ fn make_constructor_args(param_info: &[ConstructorParam], fields: &[FieldInfo]) 
 fn make_constructor_impl(info: ConstructorInfo, fields: &[FieldInfo]) -> TokenStream2 {
     let vis = info.vis;
     let name = info.name;
-    let params = make_constructor_args(&info.params[..], fields);
+    let name_str = name.to_string();
+    let params = make_constructor_args(&name_str, &info.params[..], fields);
     let mut initializers = Vec::new();
     for field in fields {
         let ident = &field.ident;
-        let init = &field.initializer;
+        let init = field
+            .custom_init
+            .get(&name_str)
+            .or(field.default_init.as_ref())
+            .cloned()
+            .unwrap_or(quote! { #ident });
         initializers.push(quote! {
             #ident: #init
         });
@@ -180,15 +189,27 @@ fn make_constructor_impl(info: ConstructorInfo, fields: &[FieldInfo]) -> TokenSt
     }
 }
 
-struct EqualsExpr {
+struct ValueBody {
     expr: Expr,
+    for_constructor: Option<String>,
 }
 
-impl Parse for EqualsExpr {
+impl Parse for ValueBody {
     fn parse(input: ParseStream) -> syn::parse::Result<Self> {
-        let _: Token![=] = input.parse()?;
-        let expr: Expr = input.parse()?;
-        Ok(Self { expr })
+        let interior;
+        parenthesized!(interior in input);
+        let expr: Expr = interior.parse()?;
+        let for_constructor = if interior.is_empty() {
+            None
+        } else {
+            let _: Token![for] = interior.parse()?;
+            let name: Ident = interior.parse()?;
+            Some(name.to_string())
+        };
+        Ok(Self {
+            expr,
+            for_constructor,
+        })
     }
 }
 
@@ -212,17 +233,21 @@ pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut field_infos = Vec::new();
     for field in fields {
         let ident = field.ident.clone().unwrap();
-        let mut initializer = quote! { #ident };
-        let mut parameter_required = true;
         let mut condemned_indexes = Vec::new();
+        let mut custom_init = HashMap::new();
+        let mut default_init = None;
         for (index, attr) in field.attrs.iter().enumerate() {
             if attr.path.is_ident("value") {
                 condemned_indexes.push(index);
                 let tokens = attr.tokens.clone().into();
-                let ee: EqualsExpr = syn::parse_macro_input!(tokens);
-                let expr = ee.expr;
-                initializer = quote! { #expr };
-                parameter_required = false;
+                let vb: ValueBody = syn::parse_macro_input!(tokens);
+                let expr = vb.expr;
+                let initializer = quote! { #expr };
+                if let Some(for_constructor) = vb.for_constructor {
+                    custom_init.insert(for_constructor, initializer);
+                } else {
+                    default_init = Some(initializer);
+                }
             }
         }
         condemned_indexes.reverse();
@@ -230,10 +255,10 @@ pub fn make_constructor(attr: TokenStream, item: TokenStream) -> TokenStream {
             field.attrs.remove(index);
         }
         field_infos.push(FieldInfo {
-            initializer,
             ident,
             ty: &field.ty,
-            parameter_required,
+            custom_init,
+            default_init,
         });
     }
 
