@@ -1,10 +1,11 @@
 [package]
 name = "scones"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Joshua Maros <60271685+joshua-maros@users.noreply.github.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
 description = "Generates simple constructors for structs."
+readme = "../README.md"
 documentation = "https://docs.rs/scones"
 repository = "https://github.com/joshua-maros/scones"
 

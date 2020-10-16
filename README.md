@@ -2,6 +2,7 @@
 
 [![Scones on Crates.IO](https://img.shields.io/crates/v/scones)](https://crates.io/crates/scones)
 [![Documentation](https://img.shields.io/badge/documentation-link-success)](https://docs.rs/scones)
+[![Examples](https://img.shields.io/badge/examples-link-success)](https://docs.rs/scones_examples)
 
 A crate for quick and powerful constructor/builder generation in Rust. Dual
 licensed under `MIT OR Apache-2.0`. Example:

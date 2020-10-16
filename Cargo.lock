@@ -61,7 +61,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "scones"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "scones_macros 0.1.1",
 ]
@@ -70,7 +70,7 @@ dependencies = [
 name = "scones_examples"
 version = "0.1.1"
 dependencies = [
- "scones 0.1.1",
+ "scones 0.1.2",
 ]
 
 [[package]]
