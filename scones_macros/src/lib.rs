@@ -503,7 +503,7 @@ fn make_builder_impl(
 
     let mut documentation = "".to_owned();
     documentation.push_str(&format!(
-        "A builder which creates an instance of `{}`. Use `{}::new()` to start the builder. ",
+        "A builder which creates an instance of `{}`. \n\nUse `{}::new()` to start the builder. ",
         struct_name, builder_name,
     ));
     documentation.push_str("Calling `build()` consumes the builder, returning the completed ");
