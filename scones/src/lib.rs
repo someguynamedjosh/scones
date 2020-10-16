@@ -23,7 +23,7 @@
 //! let inverse = MyData::inverse(5);
 //! let identity = MyData::identity();
 //! ```
-//! 
+//!
 //! Documented examples can be found at [https://docs.rs/scones_examples](https://docs.rs/scones_examples)
 
 use std::marker::PhantomData;
