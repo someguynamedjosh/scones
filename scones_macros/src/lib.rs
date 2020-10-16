@@ -353,6 +353,7 @@ fn make_builder_fields(
 
 fn make_builder_impl(
     struct_name: &Ident,
+    is_tuple: bool,
     generic_params: &Generics,
     info: BuilderInfo,
     fields: &[FieldInfo],
@@ -447,13 +448,18 @@ fn make_builder_impl(
             .or(field.default_init.as_ref())
             .cloned()
             .unwrap_or(quote! { #ident });
+        let prefix = if is_tuple {
+            quote! {}
+        } else {
+            quote! { #ident: }
+        };
         if override_fields.contains(&ident.to_string()) {
             initializers.push(quote! {
-                #ident: #ident.unwrap_or(#init)
+                #prefix #ident.unwrap_or(#init)
             });
         } else {
             initializers.push(quote! {
-                #ident: #init
+                #prefix #init
             });
         }
     }
@@ -486,11 +492,16 @@ fn make_builder_impl(
     let result_type: Type = parse_quote! { #struct_name <#(#generic_args),*> };
     let mut return_type = info.custom_return_type.unwrap_or(result_type.clone());
     let return_semantics = info.return_semantics;
+    let make_result = if is_tuple {
+        quote! { #struct_name ( #(#initializers),* ) }
+    } else {
+        quote! { #struct_name { #(#initializers),* } }
+    };
     let constructor_body = match return_semantics {
-        ReturnSemantics::Selff => quote! { #struct_name { #(#initializers),* } },
+        ReturnSemantics::Selff => make_result,
         ReturnSemantics::Result => {
             return_type = parse_quote! { ::core::result::Result<#result_type, #return_type> };
-            quote! { ::core::result::Result::Ok(#struct_name { #(#initializers),* }) }
+            quote! { ::core::result::Result::Ok(#make_result) }
         }
     };
     let generic_where = &generic_params.where_clause;
@@ -633,6 +644,7 @@ fn make_constructor_args(
 }
 
 fn make_constructor_impl(
+    is_tuple: bool,
     info: ConstructorInfo,
     documentation: &[Lit],
     fields: &[FieldInfo],
@@ -651,21 +663,21 @@ fn make_constructor_impl(
             .or(field.default_init.as_ref())
             .cloned()
             .unwrap_or(quote! { #ident });
-        initializers.push(quote! {
-            #ident: #init
-        });
+        let initializer = if is_tuple {
+            quote! { #init }
+        } else {
+            quote! { #ident: #init }
+        };
+        initializers.push(initializer);
     }
+    let make_self = if is_tuple {
+        quote! { Self ( #(#initializers),* ) }
+    } else {
+        quote! { Self { #(#initializers),* } }
+    };
     let body = match info.return_semantics {
-        ReturnSemantics::Selff => quote! {
-            Self {
-                #(#initializers),*
-            }
-        },
-        ReturnSemantics::Result => quote! {
-            ::core::result::Result::Ok(Self {
-                #(#initializers),*
-            })
-        },
+        ReturnSemantics::Selff => make_self,
+        ReturnSemantics::Result => quote! { ::core::result::Result::Ok(#make_self) },
     };
     Ok(quote! {
         #(#[doc = #documentation])*
@@ -879,19 +891,24 @@ pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
         item_names.insert(b.name.to_string());
     }
 
-    let fields = if let Fields::Named(fields) = &mut struct_def.fields {
-        &mut fields.named
+    let (fields, is_tuple) = if let Fields::Named(fields) = &mut struct_def.fields {
+        (&mut fields.named, false)
+    } else if let Fields::Unnamed(fields) = &mut struct_def.fields {
+        (&mut fields.unnamed, true)
     } else {
         return Error::new_spanned(
             &struct_def,
-            "make_constructor currently only works on structs with named fields.",
+            "Cannot use make_constructor or make_builder on a unit struct.",
         )
         .to_compile_error()
         .into();
     };
     let mut field_infos = Vec::new();
-    for field in fields {
-        let ident = field.ident.clone().unwrap();
+    for (index, field) in fields.into_iter().enumerate() {
+        let ident = field
+            .ident
+            .clone()
+            .unwrap_or_else(|| format_ident!("field_{}", index));
         let mut condemned_indexes = Vec::new();
         let mut custom_init = HashMap::new();
         let mut default_init = None;
@@ -935,14 +952,20 @@ pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut builder_code = Vec::new();
     for builder in builders {
-        match make_builder_impl(&struct_name, &generic_params, builder, &field_infos[..]) {
+        match make_builder_impl(
+            &struct_name,
+            is_tuple,
+            &generic_params,
+            builder,
+            &field_infos[..],
+        ) {
             Ok(def) => builder_code.push(def),
             Err(err) => return err.to_compile_error().into(),
         }
     }
     let mut constructor_defs = Vec::new();
     for (cons, doc) in constructors {
-        match make_constructor_impl(cons, &doc[..], &field_infos[..]) {
+        match make_constructor_impl(is_tuple, cons, &doc[..], &field_infos[..]) {
             Ok(def) => constructor_defs.push(def),
             Err(err) => return err.to_compile_error().into(),
         }

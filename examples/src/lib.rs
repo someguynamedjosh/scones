@@ -3,7 +3,8 @@ use scones::{make_builder, make_constructor};
 /// A basic example which generates a default constructor.
 ///
 /// It is defined as follows:
-/// ```ignore
+/// ```
+/// # use scones::*;
 /// #[make_constructor]
 /// pub struct Basic {
 ///     pub int: i32,
@@ -25,7 +26,8 @@ pub fn basic_demo() {
 /// initialize the existing fields.
 ///
 /// It is defined as follows:
-/// ```ignore
+/// ```
+/// # use scones::*;
 /// #[make_constructor(pub new(a: i32, b: i32))]
 /// /// ^ Returns a new instance of `CustomArgs` with `product` equal to `a * b` and `sum` equal to
 /// /// ^ `a + b`.
@@ -58,7 +60,8 @@ pub fn custom_args_demo() {
 /// An example showing how to efficiently create multiple constructors.
 ///
 /// It is defined as follows:
-/// ```ignore
+/// ```
+/// # use scones::*;
 /// #[make_constructor]
 /// /// ^ This is documentation for the first constructor. Notice how a, b, and c have been
 /// /// ^ automatically generated for us.
@@ -118,7 +121,8 @@ pub fn multiple_constructors_demo() {
 /// An example showing how to return a `Result` from a construtor.
 ///
 /// It is defined as follows:
-/// ```ignore
+/// ```
+/// # use scones::*;
 /// #[make_constructor((text: &str) -> Result<Self, std::num::ParseIntError>)]
 /// pub struct ReturnResult {
 ///     #[value(text.parse()?)]
@@ -140,10 +144,38 @@ pub fn return_result_demo() {
     assert!(ReturnResult::new("alskdjf").is_err());
 }
 
+/// An example showing the semantics for tuple structs.
+///
+/// It is defined as follows:
+/// ```
+/// # use scones::*;
+/// #[make_constructor]
+/// #[make_constructor(pub default_number)]
+/// #[make_builder((field_1?))]
+/// pub struct TupleStruct(
+///     #[value(30 for default_number)] i32,
+///     #[value("Unnamed".to_owned() for TupleStructBuilder)] String,
+/// );
+/// ```
+#[make_constructor]
+#[make_constructor(pub default_number)]
+#[make_builder((field_1?))]
+pub struct TupleStruct(
+    #[value(30 for default_number)] i32,
+    #[value("Unnamed".to_owned() for TupleStructBuilder)] String,
+);
+
+#[test]
+pub fn tuple_struct_demo() {
+    let instance = TupleStructBuilder::new().field_0(20).build();
+    assert_eq!(instance.1, "Unnamed");
+}
+
 /// An example showing how to create a builder.
 ///
 /// It is defined as follows:
-/// ```ignore
+/// ```
+/// # use scones::*;
 /// #[make_builder]
 /// pub struct BasicBuilt {
 ///     pub int: i32,
@@ -167,7 +199,8 @@ pub fn basic_built_demo() {
 /// An example showing how to add optional fields to a builder.
 ///
 /// It is defined as follows:
-/// ```ignore
+/// ```
+/// # use scones::*;
 /// #[make_builder(pub OptionalBuilder(optional: f32))]
 /// /// ^ An example of how to use this builder is as follows:
 /// /// ^ ```
@@ -216,7 +249,8 @@ pub fn optional_built_demo() {
 ///
 /// Overrides are sugar for accomplishing the job the `OptionalBuilt` example does with less
 /// verbosity. This example is defined as follows:
-/// ```ignore
+/// ```
+/// # use scones::*;
 /// #[make_builder(pub OverridableBuilder(defaults_to_zero?))]
 /// pub struct OverridableBuilt {
 ///     #[value(0)]
@@ -244,7 +278,8 @@ pub fn overridable_built_demo() {
 /// An example showing that all this crate's features work with templated types.
 ///
 /// It is defined as follows:
-/// ```ignore
+/// ```
+/// # use scones::*;
 /// #[make_builder]
 /// #[make_builder(pub TemplatedTryBuilder -> Result<Self, i32>)]
 /// #[make_constructor]
