@@ -9,7 +9,7 @@ use syn::punctuated::Punctuated;
 use syn::token::{Comma, Paren};
 use syn::{
     braced, parenthesized, parse_quote, Attribute, Error, Expr, Fields, GenericParam, Generics,
-    Ident, ItemStruct, Path, Token, Type, Visibility,
+    Ident, ItemStruct, Lit, LitStr, Path, Token, Type, Visibility,
 };
 
 #[derive(Clone)]
@@ -78,16 +78,18 @@ struct BuilderInfo {
     params: Vec<BuilderParam>,
     custom_return_type: Option<Type>,
     return_semantics: ReturnSemantics,
+    documentation: Vec<Lit>,
 }
 
 impl PartialBuilderInfo {
-    fn complete(self, struct_name: &Ident) -> BuilderInfo {
+    fn complete(self, struct_name: &Ident, documentation: Vec<Lit>) -> BuilderInfo {
         BuilderInfo {
             vis: self.vis,
             name: self.name.unwrap_or(format_ident!("{}Builder", struct_name)),
             params: self.params,
             custom_return_type: self.custom_return_type,
             return_semantics: self.return_semantics,
+            documentation,
         }
     }
 }
@@ -521,9 +523,11 @@ fn make_builder_impl(
         "let instance = {}::new(){}.build();\n```",
         builder_name, example,
     ));
+    let user_doc = info.documentation;
 
     Ok(quote! {
         #[doc=#documentation]
+        #(#[doc=#user_doc])*
         #vis struct #builder_name #all_generic_params #generic_where {
             #(#field_defs),*
         }
@@ -630,6 +634,7 @@ fn make_constructor_args(
 
 fn make_constructor_impl(
     info: ConstructorInfo,
+    documentation: &[Lit],
     fields: &[FieldInfo],
 ) -> Result<TokenStream2, Error> {
     let vis = info.vis;
@@ -663,6 +668,7 @@ fn make_constructor_impl(
         },
     };
     Ok(quote! {
+        #(#[doc = #documentation])*
         #vis fn #name (#params) -> #return_type {
             #body
         }
@@ -740,69 +746,87 @@ impl Parse for GenerateItemsContent {
     }
 }
 
-// This can be invoked multiple times and it will produce a single #[generate_items__]
-// invocation.
-#[proc_macro_attribute]
-pub fn make_constructor(input_attr: TokenStream, item: TokenStream) -> TokenStream {
+struct MaybeDocComment(Option<String>);
+
+impl Parse for MaybeDocComment {
+    fn parse(input: ParseStream) -> syn::parse::Result<Self> {
+        if !input.peek(Token![=]) {
+            return Ok(Self(None));
+        }
+        let _: Token![=] = input.parse()?;
+        let content: LitStr = input.parse()?;
+        Ok(Self(Some(content.value())))
+    }
+}
+
+fn make_item<ItemType: Parse>(
+    input_attr: TokenStream,
+    item: TokenStream,
+    label: &str,
+) -> TokenStream {
     let input_attr2: TokenStream2 = input_attr.clone().into();
     // Check that the input is valid.
-    let _: ConstructorInfo = syn::parse_macro_input!(input_attr);
-    let macro_arg = quote! { constructor { #input_attr2 } };
+    let _: ItemType = syn::parse_macro_input!(input_attr);
+    let label = format_ident!("{}", label);
+    let macro_arg = quote! { #label { #input_attr2 } };
     let mut struct_def: ItemStruct = syn::parse_macro_input!(item);
     let mut found = false;
-    for attr in &mut struct_def.attrs {
+    let mut consume_doc = true;
+    let mut user_documentation = Vec::new();
+    let mut condemned_indexes = Vec::new();
+    for (index, attr) in struct_def.attrs.iter_mut().enumerate() {
+        if path_equal(&attr.path, &parse_quote! { doc }) {
+            if let MaybeDocComment(Some(content)) = syn::parse2(attr.tokens.clone()).unwrap() {
+                if consume_doc && content.starts_with(" ^") {
+                    user_documentation.push(String::from(&content[2..]));
+                    condemned_indexes.push(index);
+                }
+            }
+        } else {
+            consume_doc = false;
+        }
+        // This will be the last attribute so we don't have to worry about finding it before we
+        // consume all the relevant doc comments.
         if path_equal(&attr.path, &parse_quote! { ::scones::generate_items__}) {
             let old_args: GenerateItemsContent = syn::parse2(attr.tokens.clone()).unwrap();
             let old_args = old_args.args;
-            attr.tokens = quote! { ( #old_args #macro_arg ) };
+            attr.tokens = quote! { ( #old_args #macro_arg { #(#user_documentation),* } ) };
             found = true;
             break;
         }
     }
     if !found {
         let attr_def = quote! {
-            #[::scones::generate_items__(#macro_arg)]
+            #[::scones::generate_items__(#macro_arg { #(#user_documentation),* } )]
         };
         struct_def
             .attrs
             .append(&mut (Attribute::parse_outer).parse2(attr_def).unwrap());
     }
+    condemned_indexes.reverse();
+    for index in condemned_indexes {
+        struct_def.attrs.remove(index);
+    }
     (quote! { #struct_def }).into()
+}
+
+// This can be invoked multiple times and it will produce a single #[generate_items__]
+// invocation.
+#[proc_macro_attribute]
+pub fn make_constructor(input_attr: TokenStream, item: TokenStream) -> TokenStream {
+    make_item::<ConstructorInfo>(input_attr, item, "constructor")
 }
 
 // This can be invoked multiple times and it will produce a single #[generate_items__]
 // invocation.
 #[proc_macro_attribute]
 pub fn make_builder(input_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input_attr2: TokenStream2 = input_attr.clone().into();
-    // Check that the input is valid.
-    let _: PartialBuilderInfo = syn::parse_macro_input!(input_attr);
-    let macro_arg = quote! { builder { #input_attr2 } };
-    let mut struct_def: ItemStruct = syn::parse_macro_input!(item);
-    let mut found = false;
-    for attr in &mut struct_def.attrs {
-        if path_equal(&attr.path, &parse_quote! { ::scones::generate_items__}) {
-            let old_args: GenerateItemsContent = syn::parse2(attr.tokens.clone()).unwrap();
-            let old_args = old_args.args;
-            attr.tokens = quote! { ( #old_args #macro_arg ) };
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        let attr_def = quote! {
-            #[::scones::generate_items__(#macro_arg)]
-        };
-        struct_def
-            .attrs
-            .append(&mut (Attribute::parse_outer).parse2(attr_def).unwrap());
-    }
-    (quote! { #struct_def }).into()
+    make_item::<PartialBuilderInfo>(input_attr, item, "builder")
 }
 
 struct GenerateItemsArgs {
-    builders: Vec<PartialBuilderInfo>,
-    constructors: Vec<ConstructorInfo>,
+    builders: Vec<(PartialBuilderInfo, Vec<Lit>)>,
+    constructors: Vec<(ConstructorInfo, Vec<Lit>)>,
 }
 
 impl Parse for GenerateItemsArgs {
@@ -815,10 +839,15 @@ impl Parse for GenerateItemsArgs {
             let kind: Ident = input.parse()?;
             let content;
             braced!(content in input);
+            let documentation;
+            braced!(documentation in input);
+            let documentation: Punctuated<Lit, Comma> =
+                documentation.parse_terminated(Lit::parse)?;
+            let documentation: Vec<_> = documentation.into_iter().collect();
             if kind == "constructor" {
-                result.constructors.push(content.parse()?);
+                result.constructors.push((content.parse()?, documentation));
             } else if kind == "builder" {
-                result.builders.push(content.parse()?);
+                result.builders.push((content.parse()?, documentation));
             } else {
                 unreachable!("Bad syntax generation");
             }
@@ -836,7 +865,7 @@ pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
         constructors,
     } = syn::parse_macro_input!(attr);
     let mut item_names: HashSet<String> = HashSet::new();
-    for c in &constructors {
+    for (c, _) in &constructors {
         item_names.insert(c.name.to_string());
     }
     let mut struct_def: ItemStruct = syn::parse_macro_input!(item);
@@ -844,7 +873,7 @@ pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
     let struct_name = &struct_def.ident;
     let builders: Vec<_> = builders
         .into_iter()
-        .map(|b| b.complete(struct_name))
+        .map(|(b, doc)| b.complete(struct_name, doc))
         .collect();
     for b in &builders {
         item_names.insert(b.name.to_string());
@@ -912,8 +941,8 @@ pub fn generate_items__(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
     let mut constructor_defs = Vec::new();
-    for cons in constructors {
-        match make_constructor_impl(cons, &field_infos[..]) {
+    for (cons, doc) in constructors {
+        match make_constructor_impl(cons, &doc[..], &field_infos[..]) {
             Ok(def) => constructor_defs.push(def),
             Err(err) => return err.to_compile_error().into(),
         }

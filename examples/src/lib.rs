@@ -8,7 +8,7 @@ pub struct Basic {
 
 #[test]
 pub fn basic_demo() {
-    let instance_ = Basic::new(123, "hello".to_string());
+    let _instance = Basic::new(123, "hello".to_string());
 }
 
 #[make_constructor(pub new(a: i32, b: i32))]
@@ -27,7 +27,9 @@ pub fn custom_args_demo() {
 }
 
 #[make_constructor]
+/// ^ This is documentation for the first constructor.
 #[make_constructor(pub new_identical(shared: i32))]
+/// ^ This is documentation for the second constructor.
 pub struct MultipleConstructors {
     #[value(shared for new_identical)]
     pub a: i32,
@@ -54,7 +56,7 @@ pub fn multiple_constructors_demo() {
 #[make_constructor(pub (text: &str) -> Result<Self, std::num::ParseIntError>)]
 pub struct ReturnResult {
     #[value(text.parse()?)]
-    number: i32
+    pub number: i32
 }
 
 #[test]
@@ -65,6 +67,7 @@ pub fn return_result_demo() {
 }
 
 #[make_builder]
+/// ^ This is additional documentation for the builder.
 #[make_builder(TemplatedTryBuilder -> Result<Self, i32>)]
 #[make_constructor]
 #[make_constructor(try_new -> Result<Self, i32>)]
