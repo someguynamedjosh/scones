@@ -61,21 +61,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "scones"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "scones_macros 0.1.0",
+ "scones_macros 0.1.1",
 ]
 
 [[package]]
 name = "scones_examples"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "scones 0.1.0",
+ "scones 0.1.1",
 ]
 
 [[package]]
 name = "scones_macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "Inflector 0.11.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "proc-macro2 1.0.24 (registry+https://github.com/rust-lang/crates.io-index)",
