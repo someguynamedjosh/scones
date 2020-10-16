@@ -1,6 +1,5 @@
 use inflector::Inflector;
 use proc_macro::TokenStream;
-use proc_macro2::Span;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
@@ -25,6 +24,7 @@ enum ReturnSemantics {
     Result,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum BuilderParam {
     Field {
         name: Ident,
@@ -149,6 +149,7 @@ impl Parse for PartialBuilderInfo {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum ConstructorParam {
     /// A parameter which directly corresponds to a specific field.
     Field(Ident),
@@ -445,7 +446,7 @@ fn make_builder_impl(
         let init = field
             .custom_init
             .get(&str_name)
-            .or(field.default_init.as_ref())
+            .or_else(|| field.default_init.as_ref())
             .cloned()
             .unwrap_or(quote! { #ident });
         let prefix = if is_tuple {
@@ -490,7 +491,9 @@ fn make_builder_impl(
         vec
     };
     let result_type: Type = parse_quote! { #struct_name <#(#generic_args),*> };
-    let mut return_type = info.custom_return_type.unwrap_or(result_type.clone());
+    let mut return_type = info
+        .custom_return_type
+        .unwrap_or_else(|| result_type.clone());
     let return_semantics = info.return_semantics;
     let make_result = if is_tuple {
         quote! { #struct_name ( #(#initializers),* ) }
@@ -653,14 +656,16 @@ fn make_constructor_impl(
     let name = info.name;
     let name_str = name.to_string();
     let params = make_constructor_args(&name_str, &info.params[..], fields)?;
-    let return_type = info.custom_return_type.unwrap_or(parse_quote! { Self });
+    let return_type = info
+        .custom_return_type
+        .unwrap_or_else(|| parse_quote! { Self });
     let mut initializers = Vec::new();
     for field in fields {
         let ident = &field.ident;
         let init = field
             .custom_init
             .get(&name_str)
-            .or(field.default_init.as_ref())
+            .or_else(|| field.default_init.as_ref())
             .cloned()
             .unwrap_or(quote! { #ident });
         let initializer = if is_tuple {
@@ -709,6 +714,7 @@ impl Parse for ValueBody {
 }
 
 fn path_equal(p1: &Path, p2: &Path) -> bool {
+    #[allow(clippy::if_same_then_else)]
     if p1.leading_colon.is_some() != p2.leading_colon.is_some() {
         false
     } else if p1.segments.len() != p2.segments.len() {
@@ -716,7 +722,7 @@ fn path_equal(p1: &Path, p2: &Path) -> bool {
     } else {
         for (a, b) in p1.segments.iter().zip(p2.segments.iter()) {
             // We are not comparing any paths with arguments so not worrying about that.
-            if a.ident.to_string() != b.ident.to_string() {
+            if a.ident != b.ident {
                 return false;
             }
         }

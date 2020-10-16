@@ -185,12 +185,12 @@ use std::marker::PhantomData;
 /// ```
 /// As mentioned before, you can add a parameter and explicitly give it an `Option<>` datatype
 /// to make it optional, in which case it does not matter whether or not you specify its value
-/// when using the builder, your code will still compile. One common use of this is to have a 
+/// when using the builder, your code will still compile. One common use of this is to have a
 /// default value for a particular field, but allow a user to change it. The long way to do that
 /// would be as follows:
 /// ```
 /// use scones::make_builder;
-/// 
+///
 /// #[make_builder((data: Option<i32>))]
 /// struct MyStruct {
 ///     #[value(data.unwrap_or(100))]
@@ -201,14 +201,14 @@ use std::marker::PhantomData;
 /// shortcut was created which produces identical results:
 /// ```
 /// use scones::make_builder;
-/// 
+///
 /// #[make_builder((data?))]
 /// struct MyStruct {
 ///     #[value(100)]
 ///     data: i32
 /// }
 /// ```
-/// The usage of `data?` is called an "override" because it is not required, but when it is 
+/// The usage of `data?` is called an "override" because it is not required, but when it is
 /// provided, it will *override* the default value of `data`.
 ///
 /// # Templates and Tuple Structs

@@ -20,3 +20,9 @@ jobs:
       run: cargo test
     - name: Check that documentation works
       run: cargo doc
+    - name: Check for clippy lints
+      run: cargo clippy
+      env:
+        RUSTFLAGS: -Dwarnings
+    - name: Check formatting
+      run: cargo fmt -- --check
