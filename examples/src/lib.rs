@@ -3,7 +3,7 @@ use scones::{make_builder, make_constructor};
 /// A basic example which generates a default constructor.
 ///
 /// It is defined as follows:
-/// ```
+/// ```ignore
 /// #[make_constructor]
 /// pub struct Basic {
 ///     pub int: i32,
@@ -25,7 +25,7 @@ pub fn basic_demo() {
 /// initialize the existing fields.
 ///
 /// It is defined as follows:
-/// ```
+/// ```ignore
 /// #[make_constructor(pub new(a: i32, b: i32))]
 /// /// ^ Returns a new instance of `CustomArgs` with `product` equal to `a * b` and `sum` equal to
 /// /// ^ `a + b`.
@@ -58,7 +58,7 @@ pub fn custom_args_demo() {
 /// An example showing how to efficiently create multiple constructors.
 ///
 /// It is defined as follows:
-/// ```
+/// ```ignore
 /// #[make_constructor]
 /// /// ^ This is documentation for the first constructor. Notice how a, b, and c have been
 /// /// ^ automatically generated for us.
@@ -118,7 +118,7 @@ pub fn multiple_constructors_demo() {
 /// An example showing how to return a `Result` from a construtor.
 ///
 /// It is defined as follows:
-/// ```
+/// ```ignore
 /// #[make_constructor((text: &str) -> Result<Self, std::num::ParseIntError>)]
 /// pub struct ReturnResult {
 ///     #[value(text.parse()?)]
@@ -143,7 +143,7 @@ pub fn return_result_demo() {
 /// An example showing how to create a builder.
 ///
 /// It is defined as follows:
-/// ```
+/// ```ignore
 /// #[make_builder]
 /// pub struct BasicBuilt {
 ///     pub int: i32,
@@ -167,7 +167,7 @@ pub fn basic_built_demo() {
 /// An example showing how to add optional fields to a builder.
 ///
 /// It is defined as follows:
-/// ```
+/// ```ignore
 /// #[make_builder(pub OptionalBuilder(optional: f32))]
 /// /// ^ An example of how to use this builder is as follows:
 /// /// ^ ```
@@ -188,7 +188,7 @@ pub fn basic_built_demo() {
 /// automatically change this to use `::std::option::Option`.
 #[make_builder(pub OptionalBuilder(optional: Option<f32>))]
 /// ^ An example of how to use this builder is as follows:
-/// ^ ```
+/// ^ ```ignore
 /// ^ let instance = OptionalBuilder::new().required(12).build();
 /// ^ assert_eq!(instance.constructed_from_optional, 0);
 /// ^ let instance = OptionalBuilder::new().required(12).optional(5.0).build();
@@ -216,7 +216,7 @@ pub fn optional_built_demo() {
 ///
 /// Overrides are sugar for accomplishing the job the `OptionalBuilt` example does with less
 /// verbosity. This example is defined as follows:
-/// ```
+/// ```ignore
 /// #[make_builder(pub OverridableBuilder(defaults_to_zero?))]
 /// pub struct OverridableBuilt {
 ///     #[value(0)]
@@ -244,7 +244,7 @@ pub fn overridable_built_demo() {
 /// An example showing that all this crate's features work with templated types.
 ///
 /// It is defined as follows:
-/// ```
+/// ```ignore
 /// #[make_builder]
 /// #[make_builder(pub TemplatedTryBuilder -> Result<Self, i32>)]
 /// #[make_constructor]

@@ -518,7 +518,7 @@ fn make_builder_impl(
             example.push_str(&format!("\n    .{}(value)", name));
         }
     }
-    documentation.push_str("\nHere is a minimal example:\n```\n");
+    documentation.push_str("\nHere is a minimal example:\n```ingore\n");
     documentation.push_str(&format!(
         "let instance = {}::new(){}.build();\n```",
         builder_name, example,
