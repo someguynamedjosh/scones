@@ -309,4 +309,4 @@ pub fn templated_demo() {
 
 #[make_constructor]
 #[derive(Debug)]
-struct SconesAndDerive { }
+struct SconesAndDerive {}
