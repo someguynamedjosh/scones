@@ -306,3 +306,7 @@ pub fn templated_demo() {
     let instance = TemplatedBuilder::new().data("Hello World!").build();
     assert_eq!(instance.data, "Hello World!");
 }
+
+#[make_constructor]
+#[derive(Debug)]
+struct SconesAndDerive { }

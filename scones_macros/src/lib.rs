@@ -817,9 +817,18 @@ fn make_item<ItemType: Parse>(
         let attr_def = quote! {
             #[::scones::generate_items__(#macro_arg { #(#user_documentation),* } )]
         };
-        struct_def
-            .attrs
-            .append(&mut (Attribute::parse_outer).parse2(attr_def).unwrap());
+        let mut insert_at = 0;
+        // Make sure we don't insert before #[derive()].
+        for (index, attr) in struct_def.attrs.iter().enumerate() {
+            if path_equal(&attr.path, &parse_quote! { derive }) {
+                break;
+            }
+            insert_at = index + 1;
+        }
+        struct_def.attrs.insert(
+            insert_at,
+            (Attribute::parse_outer).parse2(attr_def).unwrap().remove(0),
+        );
     }
     condemned_indexes.reverse();
     for index in condemned_indexes {

@@ -1,6 +1,6 @@
 [package]
 name = "scones_macros"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Joshua Maros <60271685+joshua-maros@users.noreply.github.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
